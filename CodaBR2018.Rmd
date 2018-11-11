@@ -49,10 +49,10 @@ O SUS é "recheado" de sistemas de informação. Um ex-diretor do DATASUS recent
 # 3. Mãos na Massa
 
 ```{r bibliotecas, echo=FALSE}
-library(dplyr)
-library(rmarkdown)
-library(rworldmap)
 
+if (!require('dplyr')) install.packages('dplyr'); library(dplyr)
+if (!require('rmarkdown')) install.packages('rmarkdown'); library(rmarkdown)
+if (!require('rworldmap')) install.packages('rworldmap'); library(rworldmap)
 ```
 
 ## 3.1. Brasil
@@ -866,3 +866,4 @@ Se desejar, segue os meus contatos:
 Twitter : https://twitter.com/rodrigo_harry  
 LinkedIn : https://www.linkedin.com/in/rdsrds/  
 GitHub : https://github.com/rdsilva  
+Telegram : @rodrigo_harry
