@@ -112,8 +112,8 @@ rl_estab_gestao <- read.csv2('dados/cnes/BASE_DE_DADOS_CNES_201809/rlEstabProgFu
 
 ```{r lista estabelecimentos gestao}
 lista_estabelecimentos_gestao <- rl_estab_gestao %>%
-  select(CO_UNIDADE, CO_ATIVIDADE) %>%
-  mutate(CO_CNES = substr(CO_UNIDADE, 7, 13))
+                                  select(CO_UNIDADE, CO_ATIVIDADE) %>%
+                                  mutate(CO_CNES = substr(CO_UNIDADE, 7, 13))
 ```
 
 ```{r estabelecimentos por nivel atencao}
