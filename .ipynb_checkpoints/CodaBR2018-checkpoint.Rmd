@@ -1,0 +1,887 @@
+---
+title: "Descobrindo o SUS: uma análise das bases de dados públicas"
+description: |
+  Este notebook foi criado especialmente para o CodaBR 2018. O seu objetivo é mostrar como extrair informações de algumas das principais bases de dados do SUS.
+author:
+  - name: Rodrigo Silva 
+    url: https://github.com/rdsilva
+    affiliation: LAIS - Laboratório de Inovação Tecnológica em Saúde
+    affiliation_url: http://lais.huol.ufrn.br/
+date: "`r Sys.Date()`"
+output: radix::radix_article
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  comment = "##",
+  R.options = list(width = 70)
+)
+```
+
+<style>
+  body {
+    text-align: justify,
+    width
+  }
+</style>
+
+# 1. Quem é Rodrigo Silva?
+
+![Sede da Organização Pan-Americana de Saúde - Washington, D.C.](eu.jpg)
+
+Rodrigo Silva é formado em Engenharia de Computação pela Universidade Federal do Rio Grande do Norte (UFRN), com Especialização em Big Data pelo Instituto Metropole Digital (IMD/UFRN) e mestrando em Gestão e Inovação em Saúde (EBSERH/UFRN). Há 6 anos pesquisando na área de saúde, especificamente em politicas de saúde pública, vem desenvolvendo tecnologias em conjunto com o Ministério da Saúde, Fiocruz, OPAS e outras intituições não menos importantes. Todos estes anos de pesquisa e desenvolvimento renderam 26 registros de software e 3 patentes.
+
+# 2. Sobre o que vamos falar aqui?
+
+O SUS é "recheado" de sistemas de informação. Um ex-diretor do DATASUS recentemente disse que existiriam mais de 300 softwares mantidos e administrados pelo Departamento de Informática do Ministério da Saúde. Mas hoje vamos focar em alguns considerados os principais **CNES**, **FNS**, **SIH**, **ANS** e **DAB**.
+
+| Sigla | Nome | Dados Encontrados |
+|:---:|:----:|:---------:|
+|CNES|Cadastro Nacional de Estabelecimentos de Saúde|Estabelecimentos, Profissionais, Equipamentos, Vínculos, etc...|
+|SIH|Sistema de Informações Hospitalares|Internações, Procedimentos, Valores, etc...|
+|FNS|Fundo Nacional de Saúde|Repasse Financeiro Fundo a Fundo|
+|ANS|Agência Nacional de Saúde Suplementar|Saúde Privada|
+|DAB|Departamento de Atenção Básica|Cobertura da Atenção Básica|
+
+# 3. Mãos na Massa
+
+```{r bibliotecas, echo=FALSE}
+
+if (!require('dplyr')) install.packages('dplyr'); library(dplyr)
+if (!require('rmarkdown')) install.packages('rmarkdown'); library(rmarkdown)
+if (!require('rworldmap')) install.packages('rworldmap'); library(rworldmap)
+```
+
+## 3.1. Brasil
+
+Este tópico é apenas para carregarmos os dados referentes ao Brasil, seus municípios, estados, regiões, população, referente aos últimos 20 anos.
+
+Os dados reais de populaçõa brasileira só são divulgados, basicamente, a cada 10 anos. Entretanto há um trabalho entre diversos órgãos do governo federal que realizam calculos estimativos de população. Estes calculos levam em conta dados de Natalidade e Mortalidade, bem como algums outras projeções estatisticas como migração populacional.
+
+```{r brasil_populacao, layout="l-body-outset"}
+populacao <- read.csv2('dados/brasil/brazil-population-1998-2017.csv', header = TRUE)
+
+paged_table(populacao)
+```
+
+```{r brasil}
+brasil <- populacao %>%
+  filter(year == 2017) %>%
+  select(code, city, state, region, population) %>%
+  distinct()
+```
+
+```{r}
+write.csv2(brasil, 'brasil-2017.csv', row.names = FALSE)
+```
+
+
+## 3.2. Estabelecimentos de Saúde
+
+```{r estabelecimentos,layout="l-body-outset"}
+estabelecimentos <- read.csv2('dados/cnes/BASE_DE_DADOS_CNES_201809/tbEstabelecimento201809.csv', header = TRUE)
+
+paged_table(estabelecimentos)
+```
+
+```{r estabelecimentos_reduced}
+estabelecimentos_reduced <- subset(estabelecimentos, 
+                                   select = c('CO_CNES', 
+                                              'TP_UNIDADE', 
+                                              'CO_MUNICIPIO_GESTOR', 
+                                              'ST_CONEXAO_INTERNET',
+                                              'CO_CLIENTELA'))
+```
+
+```{r estabelecimentos_reduced_brasil}
+estabelecimentos_reduced <- merge(estabelecimentos_reduced, brasil, 
+                                  by.x = 'CO_MUNICIPIO_GESTOR', 
+                                  by.y='code', 
+                                  all.x=TRUE)
+```
+
+### 3.2.1 Nível de Atenção à Saúde
+
+Iremos começar a nossa avaliação pelo **Tipo de Gestão** de cada estabelecimento de saúde, em outras palavras pelo seu nível de **Atenção à Saúde**. Para esta avaliação é necessário olharmos duas tabelas, ou seja, dois arquivos *rlEstabProgFundo* e *tbGestao*. A primeira tabela faz a relação entre estabelecimentos e o código do tipo de gestão, a segunda tabela nos traduz o código do tipo de gestão.
+
+```{r tipo gestao}
+tp_gestao <- read.csv2('dados/cnes/BASE_DE_DADOS_CNES_201809/tbGestao201809.csv', header = TRUE)
+```
+
+```{r nivel de atencao a saude}
+rl_estab_gestao <- read.csv2('dados/cnes/BASE_DE_DADOS_CNES_201809/rlEstabProgFundo201809.csv', header=TRUE)
+```
+
+```{r lista estabelecimentos gestao}
+lista_estabelecimentos_gestao <- rl_estab_gestao %>%
+                                  select(CO_UNIDADE, CO_ATIVIDADE) %>%
+                                  mutate(CO_CNES = substr(CO_UNIDADE, 7, 13))
+```
+
+```{r estabelecimentos por nivel atencao}
+estabelecimentos_nivel_atencao <- merge(estabelecimentos_reduced, 
+                                        lista_estabelecimentos_gestao,
+                                        by = 'CO_CNES')
+```
+<aside>Note que esta operação gera mais entradas que o número de estabelecimentos, isto ocorre devido o fato de poder existir mais de um serviço dentro de um mesmo estabelecimento.</aside>
+
+```{r, echo=FALSE}
+length(unique(lista_estabelecimentos_gestao$CO_UNIDADE))
+```
+
+```{r estabelecimentos por nivel atencao descricao}
+estabelecimentos_nivel_atencao <- merge(estabelecimentos_nivel_atencao, 
+                                        tp_gestao,
+                                        by.x = 'CO_ATIVIDADE',
+                                        by.y = 'CO_GESTAO')
+```
+
+```{r estabelecimentos por nivel atencao sumarizado}
+estabelecimentos_nivel_atencao_sumarizado <- estabelecimentos_nivel_atencao %>%
+  group_by(DS_GESTAO) %>%
+  summarise(total = n())
+```
+
+```{r estabelecimentos por nivel atencao regiao}
+estabelecimentos_nivel_atencao_regiao <- estabelecimentos_nivel_atencao %>%
+  group_by(region, DS_GESTAO) %>%
+  summarise(total = n())
+```
+
+```{r}
+write.csv2(estabelecimentos_nivel_atencao_regiao, 'estab_regiao.csv', row.names = FALSE)
+```
+
+
+### 3.2.2 Infraestrutura Atenção Básica
+
+Em vista do que acabamos de ver, vamos fazer um recorte olhando apenas a Atenção Básica! 
+Vocês podem facilmente apenas filtrar o data frame **estabelecimentos_nivel_atencao** mas estamos aqui para aprender a manipular os dados do SUS, então vamos fazer com a mão na massa.
+
+```{r lista estabelecimentos ab}
+lista_estab_ab <- rl_estab_gestao %>%
+  filter(CO_ATIVIDADE == 1) %>%
+  select(CO_UNIDADE) %>%
+  mutate(CO_CNES = substr(CO_UNIDADE, 7, 13))
+```
+
+```{r estabelecimentos_reduced_ab}
+estabelecimentos_ab <- subset(estabelecimentos_reduced, 
+                              estabelecimentos_reduced$CO_CNES %in% lista_estab_ab$CO_CNES)
+```
+
+```{r estabelecimentos_ab_regiao}
+estabelecimentos_ab_regiao <- estabelecimentos_ab %>%
+  group_by(region) %>%
+  summarise(total = n())
+```
+
+```{r estabelecimentos_ab_estado}
+estabelecimentos_ab_estados <- estabelecimentos_ab %>%
+  group_by(state) %>%
+  summarise(total = n())
+```
+
+### 3.2.3 Estabelecimentos com Leitos por Tipo
+
+Bem, já vimos o bastante para Atenção Básica, vamos agora focar na Atenção Especializada, quantos leitos existem no Brasil?
+Para este estudo precisamos olhar para a tabela *rlEstabComplementar* e para a tabela *tbLeito*. A primeira tras a relação estabelecimento, tipo de leito e quantidade de leito disponível, a segunda nós tras informações descricionárias do tipo de leito.
+
+```{r leitos}
+leitos <- read.csv2('dados/cnes/BASE_DE_DADOS_CNES_201809/rlEstabComplementar201809.csv', header = TRUE)
+```
+
+```{r tipo leitos}
+tp_leitos <- read.csv2('dados/cnes/BASE_DE_DADOS_CNES_201809/tbLeito201809.csv', header = TRUE)
+```
+
+```{r leitos_subset}
+leitos_subset <- subset(leitos, select=c('CO_UNIDADE', 'CO_LEITO', 'QT_EXIST', 'QT_CONTR', 'QT_SUS'))
+```
+
+```{r leitos_subset tipo}
+leitos_subset <- merge(leitos_subset, tp_leitos, by = 'CO_LEITO')
+```
+
+```{r leitos_subset tipo sumarizado}
+leitos_subset_tipo <- leitos_subset %>%
+  group_by(DS_LEITO) %>%
+  summarise(Total = n())
+```
+
+Recriando a variável **CO_CNES** para então recuperarmos o Endereço do estabelecimento analisarmos estes dados sobre Leitos por regiões do Brasil.
+
+```{r leitos_subset cnes}
+leitos_subset$CO_CNES <- substr(leitos_subset$CO_UNIDADE, 7, 13) 
+```
+
+```{r estabelecimentos enderecos}
+estabelecimentos_enderecos <- subset(estabelecimentos, select=c("CO_CNES", "CO_MUNICIPIO_GESTOR"))
+```
+
+```{r estabelecimentos enderecos brasil}
+estabelecimentos_enderecos <- merge(estabelecimentos_enderecos, brasil,
+                                    by.x = 'CO_MUNICIPIO_GESTOR',
+                                    by.y = 'code',
+                                    all.x = TRUE)
+```
+
+```{r leitos brasil}
+leitos_subset <- merge(leitos_subset, estabelecimentos_enderecos,
+                       by = 'CO_CNES',
+                       all.x = TRUE)
+```
+
+```{r leitos regiao}
+leitos_subset_regiao <- leitos_subset %>%
+  group_by(DS_LEITO, region) %>%
+  summarise(Total = n())
+```
+
+Vamos observar apenas UTIs
+
+```{r leitos utis}
+leitos_subset$DS_LEITO <- as.character(leitos_subset$DS_LEITO)
+
+leitos_subset_uti_regiao <- leitos_subset %>%
+  filter(startsWith(DS_LEITO, 'UTI')) %>%
+  group_by(region) %>%
+  summarise(Total = n())
+```
+
+### 3.2.4 Estabelecimentos com Latitude e Longitude
+
+Há alguns anos o Ministério da Saúde começou a fazer o referenciamento dos estabelecimentos através da posição geografica. Apesar de não ser a melhor forma, a mais simples são as coordenadas de Latitude e Longitude. Esta informação pode auxiliar no desenvolvimento de inúmeras soluções tecnologicas. Aqui vamos apenas avaliar quantos estabelecimentos já foram mapeados e plotar esses dados em um gráfico.
+
+Primeiramente, converter os dados para o formato adequado.
+
+```{r estabelecimentos lat_long}
+estabelecimentos$NU_LONGITUDE <- as.numeric(as.character(estabelecimentos$NU_LONGITUDE))
+estabelecimentos$NU_LATITUDE <- as.numeric(as.character(estabelecimentos$NU_LATITUDE))
+```
+
+```{r estabelecimentos sumarizando lat_long}
+summary(estabelecimentos$NU_LONGITUDE)
+summary(estabelecimentos$NU_LATITUDE)
+```
+<aside>Apenas 85.916 estabelecimentos já foram mapeados com as informações de posição geografica, aproximadamente 24% dos estabelecimentos. </aside>
+
+```{r}
+mapa_estabelecimentos <- getMap(resolution = "high")
+
+# recortando apenas o brasil
+plot(mapa_estabelecimentos,
+   xlim = c(-65, -55),
+   ylim = c(-35, 5),
+   asp = 1
+) 
+
+# adicionando os pontos ao mapa
+points(estabelecimentos$NU_LONGITUDE, estabelecimentos$NU_LATITUDE, col = "red", cex = .6)
+```
+
+### 3.2.5 Estabelecimentos com Internet
+
+Uma portaria do então Ministro da Saúde, Ricardo Barros, do final de 2016 tornava obrigatório o uso deo e-SUS, sistema de prontuário eletrônico de saúde para a atenção básica. Este sistema, apesar de 6 cenários diferentes de implantação, necessariamente precisa de internet em ao menos um estabelecimento para sincronizar os dados com o DATASUS. Este é apenas um dos sistemas que necessitam de internet.
+
+```{r estabelecimentos internet}
+estabelecimentos_internet <- subset(estabelecimentos, select = c('CO_CNES', 'ST_CONEXAO_INTERNET'))
+```
+
+```{r}
+summary(estabelecimentos_internet)
+```
+
+```{r estabelecimentos internet endereco}
+estabelecimentos_internet <- merge(estabelecimentos_internet, estabelecimentos_enderecos, by = 'CO_CNES')
+```
+
+```{r estabelecimentos internet regiao}
+estabelecimentos_internet_regiao <- estabelecimentos_internet %>%
+  group_by(ST_CONEXAO_INTERNET, region) %>%
+  summarise(Total = n())
+
+```
+
+### 3.2.6 Estabelecimentos "Sempre Aberto"
+
+Estabelecimentos de saúde Sempre Abertos são todos aqueles que fazem Urgência/Emergência ou dão Plantão Clínico. Não há muito o que explicar, são todos aqueles de funcionamento 24h.
+
+```{r estabelecimentos 24h}
+estabelecimentos_24h <- subset(estabelecimentos, select = c('CO_CNES', 'TP_ESTAB_SEMPRE_ABERTO'))
+```
+
+```{r estabelecimentos 24h sumarizado}
+summary(estabelecimentos_24h)
+```
+
+```{r estabelecimentos 24h endereco}
+estabelecimentos_24h <- merge(estabelecimentos_24h, estabelecimentos_enderecos, by = 'CO_CNES')
+```
+
+```{r estabelecimentos 24h regiao}
+estabelecimentos_24h_regiao <- estabelecimentos_24h %>%
+  group_by(TP_ESTAB_SEMPRE_ABERTO, region) %>%
+  summarise(Total = n())
+
+```
+
+### 3.2.7 Estabelecimentos por Tipo de Clientela
+
+Não leve para o lado "ruim" da interpretação. Os estabelecimentos de saúde também podem ser classificados de acordo com o tipo de clientela que recebem, isso não tem nada a ver com classe social ou politica. Tipo de Clientela é relacionado ao tipo de demanda recebida pelo estabelecimento. As vezes podemos escutar uma referência a este parametro como "Hospital Porta Aberta" ou "Unidade Porta Fechada".
+
+```{r tipo de clientela}
+tp_clientela <- read.csv2('dados/cnes/BASE_DE_DADOS_CNES_201809/tbFluxoDadosClientela201809.csv', header = TRUE)
+```
+
+```{r estabelecimento clientela}
+estabelecimento_clientela <- subset(estabelecimentos, select = c('CO_CNES', 'CO_CLIENTELA'))
+```
+
+```{r estabelecimentos clientela tipo}
+estabelecimento_clientela <- merge(estabelecimento_clientela, tp_clientela)
+```
+
+```{r estabelecimento clientela endereco}
+estabelecimento_clientela <- merge(estabelecimento_clientela, estabelecimentos_enderecos, by = 'CO_CNES')
+```
+
+```{r estabelecimento clientela regiao}
+estabelecimento_clientela_regiao <- estabelecimento_clientela %>%
+  group_by(DS_CLIENTELA, region) %>%
+  summarise(Total = n())
+```
+
+Como a gente pode observar, há uma oferta disparada de *Demanda Referenciada* no Sudeste em relação aos demais estados. Isso é natural e já esperado, visto o fato de que muitos brasileiros se deslocam para os estados do sudeste para realizarem exames complexos, tratamentos e transplantes.
+
+### 3.2.8 Estabelecimentos SUS / Não SUS
+
+Todo estabelecimento de saúde deve está registrado junto ao SUS, ou seja, todos estabelecimento de saúde, mesmo que seja uma clinica particular de apenas uma sala, deve possuir o seu **Código CNES**. Para esta análise é necessário utilizar duas tabelas secundárias: *tbConvenio* e *rlEstabAtendPrestConv*. A primeira tabela citada descreve os tipos de convênios dos estabelecimentos, a segunda tabela faz o mapeamento dos estabelecimentos e sua forma de funcionamento. 
+
+Lembro apenas que estabelecimentos públicos são exclusivamente públicos, ou seja, SUS. Contúdo estabelecimentos de saúde privados podem ser contabilizados também como SUS, em vista de convênios como os de prestação de serviço de Cirurgias Especializadas e/ou Leitos Hospitalares.
+
+```{r estabelecimentos convenio}
+estabelecimento_convenio <- read.csv2('dados/cnes/BASE_DE_DADOS_CNES_201809/rlEstabAtendPrestConv201809.csv', header = TRUE)
+```
+
+```{r estabelecimento convenio reduced}
+estabelecimento_convenio_reduced <- subset(estabelecimento_convenio, select = c('CO_UNIDADE', 'CO_CONVENIO'))
+
+estabelecimento_convenio_reduced$CO_CNES <- substr(estabelecimento_convenio_reduced$CO_UNIDADE, 7, 13)
+```
+
+```{r tipo convenio}
+tp_convenio <- read.csv2('dados/cnes/BASE_DE_DADOS_CNES_201809/tbConvenio201809.csv', header = TRUE)
+```
+
+```{r estabelecimentos convenio tipo}
+estabelecimento_convenio_reduced <- merge(estabelecimento_convenio_reduced, tp_convenio)
+```
+
+```{r estabelecimentos convenio endereco}
+estabelecimento_convenio_endereco <- merge(estabelecimento_convenio_reduced, 
+                                          estabelecimentos_enderecos, 
+                                          by = 'CO_CNES')
+```
+
+```{r}
+estab_conv_sp <- estabelecimento_convenio_endereco %>%
+  group_by(DS_CONVENIO, city) %>%
+  filter(city == 'São Paulo') %>%
+  summarise(Total = n())
+```
+
+
+> Desafio : Quantos estabelecimentos de saúde da Atenção Primária são SUS e quantos são Privados???
+
+
+> Extra : Caso queira descobrir qual o tipo de atendimento prestado pelo estabelecimento ou tipo de convênio, basta olhar a tabela *tbAtendimentoPrestado*.
+
+### 3.2.9 Estabelecimentos Polo de Telessaúde
+
+Telessaúde é uma política internacional que tem por objetivo levar um serviço de saúde mais qualificado para áreas remotas ou com difícil acesso à saúde qualificada. Bastante usado no mundo todo este programa desembarcou no Brasil em 2007, pela portaria MS 35 de Janeiro daquele ano. Dentro do programa contamos com 3 modalidades: teleconsultoria, tele-educação e telediagnóstico. Em nenhuma hipótese é permitido um relacionamento entre paciente e profissional de saúde dentro do escopo de Telessaúde.
+
+Para esta análise se faz necessário olhar para a tablea *rlEstabTeleCnes*. 
+
+```{r estabelecimento telessaude}
+estabelecimento_telessaude <- read.csv2('dados/cnes/BASE_DE_DADOS_CNES_201809/rlEstabTeleCnes201809.csv', header = TRUE)
+```
+
+```{r estabelecimento telessaude reduced}
+estabelecimento_telessaude_reduced <- subset(estabelecimento_telessaude, select = c('CO_CNES', 'CO_MUNICIPIO'))
+```
+
+```{r estabelecimento telessaude reduced endereco}
+estabelecimento_telessaude_reduced_endereco <- merge(estabelecimento_telessaude_reduced,
+                                                     estabelecimentos_enderecos, 
+                                                     by = 'CO_CNES')
+```
+
+```{r estabelecimentos telessaude regiao}
+estabelecimento_telessaude_regiao <- estabelecimento_telessaude_reduced_endereco %>%
+  group_by(region) %>%
+  summarise(Total = n())
+```
+
+> Desafio : Checar se todas as unidades de fato tem conexão com a internet.
+
+
+### 3.2.10 SAMU 192
+
+O Serviço de Atendimento Móvel de Urgência funciona 24h e esta distribuido em mais da metade dos municípios do Brasil. Não se restringe a apenas veículos terrestres de 4 rodas, existem ainda aviões, barcos, motos e podem ser classificadas em Unidade de Suporte Básico e Unidade de Suporte Avançado.
+
+Para trabalhar com estes dados precisamos olhar para a tabela *rlEstabSamu*.
+
+```{r samu, layout="l-body-outset"}
+samu <- read.csv2('dados/cnes/BASE_DE_DADOS_CNES_201809/rlEstabSamu201809.csv', header = TRUE)
+paged_table(samu)
+```
+
+Quantas unidades áreas, terrestres e maritimo que não estejam desativdas?
+
+```{r samu tipo}
+samu_tipo <- samu %>%
+  summarise(veic_aereo = sum((CO_PREFIXO_AERONAVE != "") & !is.na(CO_PREFIXO_AERONAVE) & CO_DESATIVACAO == -1),
+            veic_terreste = sum((CO_PLACA != "") & !is.na(CO_PLACA) & CO_DESATIVACAO == -1),
+            veic_maritimo = sum((NU_EMBARCA_MARINHA != "") & !is.na(NU_EMBARCA_MARINHA) & CO_DESATIVACAO == -1))
+```
+
+Qual o tempo de vida médio de uma SAMU?
+
+```{r}
+samu$DT_ATIVACAO <- as.Date(samu$DT_ATIVACAO, '%d/%m/%Y')
+samu$DT_DESATIVACAO <- as.Date(samu$DT_DESATIVACAO, '%d/%m/%Y')
+```
+
+```{r samu ttl}
+samu$ttl <- as.integer(difftime(samu$DT_DESATIVACAO, samu$DT_ATIVACAO, units = "days"))
+```
+
+```{r}
+summary(samu$ttl)
+```
+
+
+## 3.3. Recursos Humanos
+
+Outro grande foco de discussão na Saúde Pública do Brasil é o tal dos Recursos Humanos. Temos médicos suficientes? Precisamos de fato dos mais médicos? Quais são os pontos chaves para nesta área?
+
+A tabela que armazena os dados pessoais do profissional de saúde é *tbDadosProfissionalSus* mas a tabela que armazena os dados profissionais do profissional, como ocupação, carga horária e vinculo é a tabela *tbCargaHorariaSus*.
+
+```{r profissionais}
+profissionais <- read.csv2('dados/cnes/BASE_DE_DADOS_CNES_201809/tbCargaHorariaSus201809.csv', header = TRUE)
+```
+
+### 3.3.1. Profissionais de Saúde
+
+Quantos profissionais de saúde existem no Brasil? Médicos, enfermeiros, especialistas? Temos profissionais suficientes?
+
+| Família CBO | Código |
+|:---:|:---:|
+|2251|Médicos Clínicos|
+|2252|Médicos Especialidades Cirurgicas|
+|2253|Médicos Dignóstico e Terapêutico|
+
+<aside>Fonte: http://www.mtecbo.gov.br/cbosite/pages/pesquisas/BuscaPorEstrutura.jsf</aside>
+
+```{r profissionais medico total}
+profissionais$CO_CBO <- as.character(profissionais$CO_CBO)
+
+medicos <- profissionais %>%
+  select(CO_UNIDADE, CO_PROFISSIONAL_SUS, CO_CBO, TP_SUS_NAO_SUS, QT_CARGA_HORARIA_AMBULATORIAL) %>%
+  filter(startsWith(CO_CBO, "2251") | startsWith(CO_CBO, "2253")  | startsWith(CO_CBO, "2253") )
+```
+
+É mais que comum que o médico possua mais de um vínculo, então não devemos confiar no resultado acima, precisamos primeiros filtrar os vinculos multiplos.
+
+```{r profissionais medico unico}
+medicos_unico <- medicos %>%
+  distinct(CO_PROFISSIONAL_SUS)
+```
+
+Qual a média de vinculos, maximo e mínimo encontrados nos dados?
+
+```{r profissionais medico vinculos}
+medicos_vinculos <- medicos %>%
+  group_by(CO_PROFISSIONAL_SUS) %>%
+  summarise(Vinculos = n())
+```
+
+```{r profissionais medico media vinculos}
+mean(medicos_vinculos$Vinculos)
+```
+
+### 3.3.2. Carga Horária
+
+A Carga Horária é um dos principais indicadores do processo de precarização do serviço e até mesmo fraude. Por muitas vezes o quantitativo de profissionais vinculados a um determinado serviço representa um repasse financeiro maior para a SMS e/ou estabelecimento. Desta forma, muitos gestores deixam de atualizar os dados de vínculos de profissionais desligados do serviço para não reduzir o montante recebido.
+
+```{r profissionais CH}
+medico_ch <- medicos %>%
+  group_by(CO_PROFISSIONAL_SUS) %>%
+  summarise(CH_Total = sum(QT_CARGA_HORARIA_AMBULATORIAL))
+```
+
+```{r}
+mean(medico_ch$CH_Total)
+```
+
+```{r}
+summary(medico_ch$CH_Total )
+```
+
+### 3.3.3. Profissional Equivalente e Postos de Trabalho
+
+Considerando uma Carga Horária Semanal "normal" de 40h, podemos facilmente inferir quantos profissionais equivalentes existem disponíveis no SUS. Se um profissional tem CH de 20h, significa que ele é 0,5 meio profissional equivalente, mas se ele tem CH de 80h, ele ocupa o "espaço" de 2 profissionais equivalentes.
+
+```{r profissionais medicos profissionais equivalentes}
+medico_ch$prof_eq <- medico_ch$CH_Total/40
+```
+
+```{r profissionais totais vs profissionais equivalentes} 
+# medico_ch[is.na(medico_ch)] <- 0
+
+medicos_quadro_geral <- medico_ch %>%
+  filter(CH_Total > 0) %>%
+  summarise(Medicos = n(),
+            Prof_eq = sum(prof_eq))
+```
+
+Mas para entendermos quantos postos de trabalho há disponível no serviço de saúde, basta olhar quantos vinculos ativos existem. Este valor corresponde diretamente a quantidade de postos de trabalhos disponíveis.
+
+```{r profissionais totais vs postos trabalho}
+medicos_quadro_geral$postos <- nrow(medicos)
+```
+
+### 3.3.4. Equipes de Saúde da Família
+
+O Programa Saúde da Família surgiu ainda nos anos 2000 e foi a principal politica de reformulação da Atenção Básica, trazendo o conceito da Atenção Primária aplicada ao redor do mundo, aproximando os profissionais de saúde à população, tornando-o alguém conhecido e familiar. Em outras palavras, o médico da eSF é o antigo "médico da família".
+
+As equipes se organizam de diversas formas e em diversas modalidades. Dependendo da modalidade da equipe, ela deve minimamente atender de 3.000 a 4.000 pessoas. Mas há também o teto de eSF que um municipio pode manter.
+
+Olhando para o fator "teto", quantas equipes de fato temos e quantas ainda são necessárias para o programa finalmente se consolidar?
+
+Para avaliar os dados de equipes de saúde, devemos olhar para a tabela *tbEquipe*. Para identificar os diferentes tipos de equipes, vamos olhar para *tbTipoEquipe*. 
+
+```{r equipes}
+equipes <- read.csv2('dados/cnes/BASE_DE_DADOS_CNES_201809/tbEquipe201809.csv', header = TRUE)
+```
+
+```{r tipo equipes}
+tp_equipes <- read.csv2('dados/cnes/BASE_DE_DADOS_CNES_201809/tbTipoEquipe201809.csv', header = TRUE)
+```
+
+```{r tipo equipes lista esf}
+tp_equipes$DS_EQUIPE <- as.character(tp_equipes$DS_EQUIPE) 
+
+lista_esf <- subset(tp_equipes, startsWith(DS_EQUIPE, "ESF"))
+```
+
+OBSERVAR OS VALORES ESF PARA EQUIPE E ESTRATEGIA.
+
+```{r equipes esf}
+equipes_sf <- equipes %>%
+  filter(TP_EQUIPE %in% lista_esf$TP_EQUIPE &
+           DT_DESATIVACAO == "" | is.na(DT_DESATIVACAO))
+```
+
+```{r populacao brasil}
+populacao_br <- populacao %>%
+  filter(year == 2017) %>%
+  summarise(total = sum(population))
+```
+
+```{r equipes esf teto}
+equipes_sf_brasil <- equipes_sf %>%
+  summarise(eq_existente = n()) %>%
+  mutate(eq_desejado = populacao_br$total/2400,
+         eq_minimo = populacao_br$total/4000)
+```
+
+### 3.3.5. Equipes de Saúde Bucal
+
+Pouco tempo após a criação do PSF ficou visível que se fazia necessário adicionar o atendimento de Saúde Bucal nas equipes, quantas equipes hoje possuem atendimento com saúde bucal?
+
+```{r tipo equipes lista esf sb}
+lista_esf_sb <- subset(lista_esf, grepl('SAUDE BUCAL', lista_esf$DS_EQUIPE))
+```
+
+```{r equipes esf geral esb}
+equipes_sf_brasil$ep_sb <- nrow(subset(equipes_sf, TP_EQUIPE %in% lista_esf_sb$TP_EQUIPE))
+```
+
+### 3.3.6. Agente Comunitário de Saúde (515105)
+
+O processo de inserção do Agente Comunitário de Saúde veio com o movimento da igreja, de criar um elemento da própria comunidade como referência para auxiliar no processo do cuidado à saúde. Hoje o Brasil enfrenta uma crise de ACS que entraram na justiça solicitando relocação, por possuirem alguma doença que os impedia de exercer sua função ou por possuir formação superior a exigida no cargo. Atualmente o Ministério da Saúde está investindo no processo de capacitação destes profissionais para torná-los aptos a executarem papeis simples de atenção à saúde.
+
+Mas quantos ainda temos no país? O suficiente segundo o que preconiza o PNAB?
+
+```{r acs}
+lista_acs <- profissionais %>%
+  filter(CO_CBO == '515105')
+```
+
+```{r acs geral}
+acs_brasil <- lista_acs %>%
+  summarise(acs_total = n()) %>%
+  mutate(acs_desejado = populacao_br$total/400,
+         acs_minimo = populacao_br$total/750)
+```
+
+É preconizado no PNAB que deve existir pelo menos 12 ACS por eSF. 
+<aside>Página 55 do documento (57 do pdf)</aside>
+
+```{r acs geral por esf}
+acs_brasil$acs_esf <- equipes_sf_brasil$eq_existente*12
+
+acs_brasil$acs_esf_real <- acs_brasil$acs_total/equipes_sf_brasil$eq_existente
+```
+
+### 3.3.7. Equipes NASF
+
+O Núcleo de Apoio à Saúde da Família foi criado para ampliar a abrangência e os escopos da Atenção Básica. Sào equipes constituidas por profissionais de diferentes áreas. Não constituem um estabelecimento nem são de acesso livre dos pacientes, quando necessária a intervenção são reguladas pela equipe da atenção básica. As equipes NASF são organizadas em 2 modalidades distintas atualmente.
+
+```{r tipo equipes lista nasf}
+lista_nasf <- subset(tp_equipes, startsWith(tp_equipes$DS_EQUIPE, 'NASF'))
+```
+
+```{r nasf}
+nasf <- subset(equipes, TP_EQUIPE %in% lista_nasf$TP_EQUIPE)
+```
+
+```{r nasf geral}
+nasf$TP_EQUIPE <- replace(nasf$TP_EQUIPE, nasf$TP_EQUIPE == 45, 7)
+
+nasf_geral <- nasf %>%
+  group_by(TP_EQUIPE) %>%
+  summarise(total = n())
+```
+
+```{r nasf geral proporcao}
+nasf_geral <- nasf_geral %>%
+  mutate(esf_maximo = if(TP_EQUIPE == 6) total*15 else total*7)
+```
+
+> Desafio : Qual a proporção de equipes NASF para o total de eSF existente hoje no Brasil?
+
+## 3.4. Cobertura das Redes de Atenção
+
+Mensalmente o Departamento de Atenção Básica do SUS publica o relatório de Cobertura da Atenção Básica. Estas informações são retiradas dos informas municipais e de outros sistemas do SUS, como o CNES. Utiliza-se para o calculo a propoção eSF e População. Vamos olhar para estes dados e compararmos com o que podemos obter da Saúde Suplementar.
+
+### 3.4.1. Atenção Básica
+
+A Atenção Básica é a dita "porta de entrada" do SUS, é nível de atenção mais próximo da população, de acesso direto e responsável pelas principais políticas públicas de saúde. Por esses e outros motivos é comum medir a cobertura de um sistema de público de saúde a partir da sua atenção primária.
+
+```{r cobertura ab, layout="l-body-outset"}
+cobertura_ab <- read.csv2('dados/cobertura/cobertura_AB_2007_2018.csv', header = TRUE)
+
+paged_table(cobertura_ab)
+```
+
+Por se tratarem de dados mensais e em vista que temos apenas os dados populacionas ano a ano, finalizando em 2017, iremos trabalhar olhando apenas para os dados de Dezembro de 2017. Vamos aproveitar e reduzir o data frame para trabalharmos apenas algumas variáveis desejadas para este momento.
+
+```{r cobertura ab 2017}
+cobertura_ab_reduced <- cobertura_ab %>%
+  filter(Ano == 2017 & Mes == 12) %>%
+  select(IBGE, Cob..Pop..Estimada.AB)
+```
+
+```{r cobertura ab 2017 normalizado}
+names(cobertura_ab_reduced)[1] <- 'code'
+names(cobertura_ab_reduced)[2] <- 'pop_coberta_ab_percent'
+
+cobertura_ab_reduced$code <- substr(as.character(cobertura_ab_reduced$code),1,6)
+cobertura_ab_reduced$pop_coberta_ab_percent <- as.character(cobertura_ab_reduced$pop_coberta_ab_percent)
+
+cobertura_ab_reduced$pop_coberta_ab_percent <- gsub("%", "", cobertura_ab_reduced$pop_coberta_ab_percent)
+cobertura_ab_reduced$pop_coberta_ab_percent <- gsub(",", ".", cobertura_ab_reduced$pop_coberta_ab_percent)
+```
+
+```{r cobertura ab 2017 populacao}
+cobertura_brasil <- merge(brasil, cobertura_ab_reduced, by = 'code', all.x = TRUE)
+```
+
+```{r cobertura ab 2017 populacao percent}
+cobertura_brasil$pop_coberta_ab_percent <- as.numeric(cobertura_brasil$pop_coberta_ab_percent)
+
+cobertura_brasil$pop_coberta_ab <-
+  floor((cobertura_brasil$population*cobertura_brasil$pop_coberta_ab_percent)/100)
+```
+
+### 3.4.2. Saúde Suplementar
+
+A Saúde Suplementar é responsável por toda a parte privada da saúde, planos e convênios, hospitais e clinicas. Todo o processo particular da saúde pública é regulada pela Saúde Suplementar. Assim sendo, iremos observar a parte da população que possui algum tipo de cobertura privada.
+
+```{r cobertura ans}
+cobertura_ans <- read.csv2('dados/cobertura/cobertura-brasil-ANS.csv', header = TRUE)
+```
+
+```{r cobertura ans reduced}
+cobertura_ans_reduced <- cobertura_ans %>%
+  filter(ano == 2017) %>%
+  select(co_municipio, cobertura_ans)
+```
+
+```{r}
+names(cobertura_ans_reduced)[1] <- 'code'
+```
+
+```{r cobertura brasil geral}
+cobertura_brasil <- merge(cobertura_brasil, cobertura_ans_reduced, all.x = TRUE, by = 'code')
+```
+
+```{r}
+names(cobertura_brasil)[8] <- 'pop_coberta_ans'
+```
+
+### 3.4.3. População "Vulnerável"
+
+Precisamos ter cuidado neste ponto, pois há um conceito especifico de "população vulnerável" dentro da saúde. Apenas para fins didáticos deste workshop chamo de "vulnerável" aquela população que *teoricamente* não está coberta nem pela atenção básica, nem pela saúde suplementar.
+
+Note que está não é a forma mais correta de se calcular tal indicador, na realidade há diversas discussões na acadêmia sobre tal temática. Aqui possivelmente alguns casos irão ocorrer em valor negativo, isso representará que a cidade em questão tem uma intersecção de cobertura.
+
+```{r cobertura brasil vulneravel}
+cobertura_brasil$pop_vulneravel <- cobertura_brasil$population - 
+  cobertura_brasil$pop_coberta_ab - 
+  cobertura_brasil$pop_coberta_ans
+```
+
+```{r cobertura brasil vulneravel percent}
+cobertura_brasil$pop_vulneravel_percent <- (cobertura_brasil$pop_vulneravel/cobertura_brasil$population)*100
+```
+
+## 3.5. Custos
+
+O orçamento público de saúde é composto de várias fontes pagadoras, para esta análise iremos olhar apenas os valores repassados pelo Governo Federal para os Municípios. Lembrando que hoje, estes valores correspondem em média à 30% do orçamento real dos municípios e estados e é baseado em um conjunto de critérios para definir o valor para cada município. Iremos também olhar para um dos pontos criticos quando falamos de dinheiro, o custo dos procedimentos de alta complexidade.
+
+Devido o grande volume de dados relacionados a alta complexidade, iremos trabalhar aqui com dados de apenas 5 estados, um de cada região do país: São Paulo, Rio Grande do Norte, Rio Grande do Sul, Rondônia e Distrito Federal.
+
+### 3.5.1. Investimento Fundo a Fundo
+
+O objetivo aqui é apenas analisar o uso dos recursos repassados pelo Fundo Nacional de Saúde (FNS) para os municípios. O valor que já representou no passado quase 80% do orçamento de saúde dos municípios, hoje está na média dos 30%.
+
+```{r investimento}
+fns <- read.csv2('dados/custos/investimentos-sus-2012-2017.csv', header = TRUE)
+```
+
+Vamos calcular o seguinte: dentre de todos os valores recebidos, qual a porcentagem correspondente à Atenção Básica?
+
+```{r investimento reduced}
+
+fns$vlLiquido <- as.numeric(as.character(fns$vlLiquido))
+
+fns_reduced <- fns %>%
+  filter(ANO == 2017) %>%
+  group_by(MUNICIPIO) %>%
+  summarise(Total_Investido = sum(vlLiquido))
+
+fns_tmp <- fns %>%
+  filter(ANO == 2017 & nome == 'ATENÇÃO BÁSICA') %>%
+  select(MUNICIPIO, vlLiquido)
+```
+
+```{r investimento reduced ab}
+fns_reduced <- merge(fns_reduced,fns_tmp)
+
+names(fns_reduced)[1] <- 'code'
+names(fns_reduced)[3] <- 'Total_AB'
+```
+
+```{r investimento reduced percent}
+fns_reduced$percent_ab <- (fns_reduced$Total_AB/fns_reduced$Total_Investido)*100
+```
+
+### 3.5.2. Custo Cirurgico 
+
+Outro ponto critico financeiramente falando é o faturamento dos procedimentos médicos realizados. Cada procedimento especializado precisa ser primeiramente regulado, neste processo é aprovado o procedimento com um valor máximo associado. Neste ponto do estudo vamos observar as variações de valores de um mesmo procedimento em diversas regiões do país.
+
+Os dados que iremos trabalhar foi retirado do SIH referentes à Agosto/2018.
+
+```{r custo}
+sih <- read.csv2('dados/custos/SIH-Brasil-0818.csv', header = TRUE)
+```
+
+```{r}
+head(sih)
+```
+
+
+#### 3.5.2.1. Cirurgia Bariatrica (04.07.01.038-6)
+
+Valor Máximo SIGTAP : R$ 6.145,00  
+http://sigtap.datasus.gov.br/tabela-unificada/app/sec/procedimento/exibir/0407010386/11/2018
+
+```{r custo catarata}
+sih_bariatrica <- sih %>%
+  filter(SP_PROCREA == 0407010386) %>%
+  group_by(SP_UF) %>%
+  summarise(Media = format(round(mean(SP_VALATO), 2), nsmall = 2)) %>%
+  mutate(Sigtap = 6145)
+```
+
+#### 3.5.2.1. Transplante de Fígado (05.05.02.005-0 - 05.05.02.006-8)
+
+Valor Máximo SIGTAP : R$ 68.838,89 (doador falecido)  
+http://sigtap.datasus.gov.br/tabela-unificada/app/sec/procedimento/exibir/0505020050/11/2018
+
+Valor Máximo SIGTAP : R$ 68.803,27 (doador vivo)  
+http://sigtap.datasus.gov.br/tabela-unificada/app/sec/procedimento/exibir/0505020068/11/2018
+
+```{r custo figado}
+sih_figado <- sih %>%
+  mutate(
+    tag = ifelse(SP_PROCREA == 0505020068, 'vivo', 
+      ifelse(SP_PROCREA == 0505020050,'falecido', NA))
+  ) %>%
+  filter(SP_PROCREA == 0505020050 | SP_PROCREA == 0505020068) %>%
+  group_by(SP_UF, tag) %>%
+  summarise(Media = format(round(mean(SP_VALATO), 2), nsmall = 2))
+```
+
+#### 3.5.2.1. Transplante de Cornea (05.05.01.009-7)
+
+Valor Máximo SIGTAP : R$ 2.070,00  
+http://sigtap.datasus.gov.br/tabela-unificada/app/sec/procedimento/exibir/0505010097/11/2018
+
+```{r custo cornea}
+sih_cornea <- sih %>%
+  filter(SP_PROCREA == 0505010097) %>%
+  group_by(SP_UF) %>%
+  summarise(Media = format(round(mean(SP_VALATO), 2), nsmall = 2)) %>%
+  mutate(Sigtap = 2070)
+```
+
+#### 3.5.2.1. Transplante de Rins (05.05.02.009-2 - 05.05.02.010-6)
+
+Valor Máximo SIGTAP : R$ 27.622,67 (doador falecido)  
+http://sigtap.datasus.gov.br/tabela-unificada/app/sec/procedimento/exibir/0505020092/11/2018
+
+Valor Máximo SIGTAP : R$ 21.238,82 (doador vivo)  
+http://sigtap.datasus.gov.br/tabela-unificada/app/sec/procedimento/exibir/0505020106/11/2018
+
+```{r custo rins}
+sih_rins <- sih %>%
+  mutate(
+    tag = ifelse(SP_PROCREA == 0505020106, 'vivo', 
+      ifelse(SP_PROCREA == 0505020092,'falecido', NA))
+  ) %>%
+  filter(SP_PROCREA == 0505020092 | SP_PROCREA == 0505020106) %>%
+  group_by(SP_UF, tag) %>%
+  summarise(Media = format(round(mean(SP_VALATO), 2), nsmall = 2))
+```
+
+
+---
+
+Obrigado! 
+
+Espero que você tenha tido a oportunidade de descobrir e aprender algo novo. Se isso aconteceu, eu consegui fazer a minha parte, se não, me avisa que eu posso melhorar.
+
+Se desejar, segue os meus contatos:
+
+Twitter : https://twitter.com/rodrigo_harry  
+LinkedIn : https://www.linkedin.com/in/rdsrds/  
+GitHub : https://github.com/rdsilva  
+Telegram : @rodrigo_harry

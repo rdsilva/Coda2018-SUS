@@ -74,6 +74,11 @@ brasil <- populacao %>%
   distinct()
 ```
 
+```{r}
+write.csv2(brasil, 'brasil-2017.csv', row.names = FALSE)
+```
+
+
 ## 3.2. Estabelecimentos de Saúde
 
 ```{r estabelecimentos,layout="l-body-outset"}
@@ -145,6 +150,11 @@ estabelecimentos_nivel_atencao_regiao <- estabelecimentos_nivel_atencao %>%
   group_by(region, DS_GESTAO) %>%
   summarise(total = n())
 ```
+
+```{r}
+write.csv2(estabelecimentos_nivel_atencao_regiao, 'estab_regiao.csv', row.names = FALSE)
+```
+
 
 ### 3.2.2 Infraestrutura Atenção Básica
 
@@ -376,6 +386,14 @@ estabelecimento_convenio_endereco <- merge(estabelecimento_convenio_reduced,
                                           estabelecimentos_enderecos, 
                                           by = 'CO_CNES')
 ```
+
+```{r}
+estab_conv_sp <- estabelecimento_convenio_endereco %>%
+  group_by(DS_CONVENIO, city) %>%
+  filter(city == 'São Paulo') %>%
+  summarise(Total = n())
+```
+
 
 > Desafio : Quantos estabelecimentos de saúde da Atenção Primária são SUS e quantos são Privados???
 
